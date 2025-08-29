@@ -1,0 +1,8 @@
+archive/
+*.log
+*.tmp
+test_*
+draft_*
+kde-backups/
+__pycache__/
+*.pyc
