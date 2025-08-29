@@ -192,6 +192,57 @@ WantedBy=default.target
 systemctl --user enable --now kde-quick-backup.timer
 ```
 
+## Topgrade + systemd Quick Backup
+- Run a quick backup automatically before Topgrade upgrades. Add to `~/.config/topgrade.toml`:
+  ```toml
+  [pre_commands]
+  "KDE Quick Backup" = "bash -lc 'cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
+  ```
+  - `printf "h\n"` answers the konsave export prompt with “no”.
+  - Target directory is `kde-backups/latest/` (gitignored).
+
+## systemd: Weekly Quick Backup (Sunday 22:00)
+User units configured to run on Sundays at 22:00:
+
+1) `~/.config/systemd/user/kde-full-backup.service`
+```ini
+[Unit]
+Description=KDE Quick Backup (headless-safe)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup
+ExecStart=/usr/bin/env bash -lc 'printf "h\n" | python3 scripts/kde_backup_restore.py --quick'
+```
+
+2) `~/.config/systemd/user/kde-full-backup.timer`
+```ini
+[Unit]
+Description=Run KDE Quick Backup weekly (Sun 22:00)
+
+[Timer]
+OnCalendar=Sun 22:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+3) Reload and enable
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now kde-full-backup.timer
+systemctl --user list-timers --no-pager | grep kde-full-backup
+```
+
+## Weekly Full Backup (with konsave) via cron (while logged in)
+Since konsave may require an active session, schedule full backups with cron when you are logged in:
+```bash
+crontab -e
+# Sunday 22:10 (example):
+10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
+```
+
 ## Notes & Safety
 - The script does NOT automatically install packages/flatpaks; it prints commands.
 - `extra-*` restore copies files; it never deletes your existing files.

@@ -261,6 +261,58 @@ python scripts/kde_backup_restore.py --compare latest tag:gaming
 - Paket/flatpak değişimleri
 - `extra-*` dosya farkları
 
+## Topgrade + systemd Quick Backup
+- __Topgrade pre_command__ ile haftalık/elle yükseltme öncesi hızlı yedek:
+  `~/.config/topgrade.toml` içine ekleyin:
+  ```toml
+  [pre_commands]
+  "KDE Quick Backup" = "bash -lc 'cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
+  ```
+  - `printf "h\n"` ile konsave export sorusuna otomatik "hayır" denir.
+  - Yedek hedefi repo içindeki `kde-backups/latest/` klasörüdür (gitignore’dadır).
+
+## systemd ile Haftalık Quick Backup (Pazar 22:00)
+Kullanıcı servisi ve zamanlayıcı (user units):
+
+1) `~/.config/systemd/user/kde-full-backup.service`
+```ini
+[Unit]
+Description=KDE Quick Backup (headless-safe)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup
+ExecStart=/usr/bin/env bash -lc 'printf "h\n" | python3 scripts/kde_backup_restore.py --quick'
+```
+
+2) `~/.config/systemd/user/kde-full-backup.timer`
+```ini
+[Unit]
+Description=Run KDE Quick Backup weekly (Sun 22:00)
+
+[Timer]
+OnCalendar=Sun 22:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+3) Etkinleştirme ve kontrol:
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now kde-full-backup.timer
+systemctl --user list-timers --no-pager | grep kde-full-backup
+```
+
+## Haftalık Full Backup (konsave’li) — cron (oturum açıkken)
+`konsave` etkileşim gerektirebildiği için full yedeklemeyi oturum açıkken cron ile zamanlamak pratik olabilir:
+```bash
+crontab -e
+# Pazar 22:10 (örnek):
+10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
+```
+
 ## 🧵 Topluluk Profilleri: Paylaşılabilir .knsv temaları ve restore senaryoları
 - Yedeklerinizi `--tags` ile sınıflandırın: `minimal`, `gaming`, `workstation` vb.
 - Restore sırasında `--tag gaming` gibi etiketlerle doğru yedeği seçin.
