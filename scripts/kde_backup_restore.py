@@ -103,6 +103,21 @@ def detect_pkg_manager() -> str:
     return "unknown"
 
 
+def detect_package_managers() -> dict[str, str]:
+    """Detect available package managers and their types."""
+    pm_info = {}
+    if which("pacman"):
+        pm_info["pacman"] = "pacman"
+    elif which("dnf"):
+        pm_info["dnf"] = "dnf"
+    elif which("apt") or which("apt-get"):
+        pm_info["apt"] = "apt"
+    elif which("zypper"):
+        pm_info["zypper"] = "zypper"
+    elif which("rpm"):
+        pm_info["rpm"] = "rpm"
+    return pm_info
+
 def list_installed_packages(pm: str) -> list[str]:
     try:
         if pm == "dnf":
@@ -135,6 +150,50 @@ def list_installed_packages(pm: str) -> list[str]:
     except subprocess.CalledProcessError:
         pass
     return []
+
+def list_installed_aur_packages() -> list[str]:
+    """List packages installed via AUR (if applicable)."""
+    if not which("yay") and not which("paru"):
+        return []
+
+    try:
+        aur_helper = "yay" if which("yay") else "paru"
+        res = run([aur_helper, "-Qm"])  # List AUR packages only
+        return sorted(set(line.split()[0] for line in res.stdout.splitlines() if line.strip()))
+    except subprocess.CalledProcessError:
+        return []
+
+def list_all_system_packages() -> dict[str, list[str]]:
+    """List all installed packages from all available package managers."""
+    all_packages = {}
+
+    # Detect system package managers
+    pm_info = detect_package_managers()
+    for pm_name, pm_type in pm_info.items():
+        all_packages[pm_type] = list_installed_packages(pm_type)
+
+    # Add AUR packages if any
+    aur_packages = list_installed_aur_packages()
+    if aur_packages:
+        all_packages["aur"] = aur_packages
+
+    # Add Flatpak packages
+    flatpak_packages = list_flatpaks()
+    if flatpak_packages:
+        all_packages["flatpak"] = flatpak_packages
+
+    return all_packages
+
+def save_system_package_manifest(backup_dir: Path):
+    """Save a comprehensive manifest of all installed packages to the backup."""
+    all_packages = list_all_system_packages()
+    manifest_path = backup_dir / "system-packages.json"
+    write_text(manifest_path, json.dumps(all_packages, indent=2, ensure_ascii=False))
+
+    # Also save as individual files for easier processing
+    for pkg_type, pkg_list in all_packages.items():
+        if pkg_list:  # Only save if the package list is not empty
+            write_text(backup_dir / f"{pkg_type}-packages.txt", "\n".join(pkg_list) + "\n")
 
 
 def list_flatpaks() -> list[str]:
@@ -221,12 +280,13 @@ KONSAVE_EXTRA_ARGS: list[str] = []  # filled by --konsave-args
 
 def konsave_save_and_export(profile: str, backup_dir: Path, archive_name: str = DEFAULT_PROFILE) -> Path:
     # Save profile (overwrite allowed)
-    cmd_save = [KONSAVE, "save", profile]
+    cmd_save = [KONSAVE, "-s", profile, "-f"]  # Use -s flag and -f to force overwrite
     if KONSAVE_EXTRA_ARGS:
         cmd_save += KONSAVE_EXTRA_ARGS
     run(cmd_save)
     export_path = backup_dir / f"{archive_name}.knsv"
-    cmd_export = [KONSAVE, "export", "-n", str(export_path)]
+    # Use -d to specify the output directory, and -n for the archive name without .knsv extension
+    cmd_export = [KONSAVE, "-e", profile, "-d", str(backup_dir), "-n", archive_name]  # Use -e flag for export, -d for directory, -n for archive name
     if KONSAVE_EXTRA_ARGS:
         cmd_export += KONSAVE_EXTRA_ARGS
     run(cmd_export)
@@ -240,6 +300,29 @@ def konsave_import_and_apply(knsv_path: Path, profile: str):
 
 
 # --------------------- backup / restore ---------------------
+
+def cleanup_old_backups(keep_count: int = 3):
+    """Keep only the most recent backups and remove older ones."""
+    if not BACKUP_ROOT.exists():
+        return
+
+    # Get all backup directories sorted by name (which includes timestamp)
+    backup_dirs = [d for d in BACKUP_ROOT.iterdir()
+                   if d.is_dir() and d.name != "latest"  # Don't delete "latest" symlink/directory
+                   and d.name not in ["archive", "scripts"]]  # Exclude other known directories
+
+    # Sort by name which should sort chronologically due to timestamp format
+    backup_dirs.sort(key=lambda x: x.name, reverse=True)
+
+    # Remove all except the most recent 'keep_count'
+    for old_dir in backup_dirs[keep_count:]:
+        try:
+            import shutil
+            shutil.rmtree(old_dir)
+            print(f"[i] Eski yedek silindi: {old_dir.name}")
+        except OSError as e:
+            print(f"[!] Eski yedek silinemedi {old_dir.name}: {e}")
+
 
 def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = None):
     if not check_konsave():
@@ -264,6 +347,9 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     fps = list_flatpaks()
     write_text(backup_dir / "flatpaks.txt", "\n".join(fps) + "\n")
 
+    print("[i] Tüm sistem paketleri listeleniyor (AUR, Flatpak, vs.)...")
+    save_system_package_manifest(backup_dir)
+
     # Extra: kritik KDE config dosyalarını ayrıca yedekle (konsave eksikse garanti olsun)
     extra_root = backup_dir / "extra-config"
     ensure_dir(extra_root)
@@ -272,6 +358,7 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
         Path(".config/plasma-org.kde.plasma.desktop-appletsrc"),
         Path(".config/kdeglobals"),
         Path(".config/kwinrc"),
+        Path(".config/mimeapps.list"),  # MIME associations
     ]
     saved_extra: list[str] = []
     for rel in extra_targets:
@@ -293,6 +380,7 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
         Path(".local/share/plasma_notes"),
         Path(".local/share/plasma-systemmonitor"),
         Path(".local/zed-preview.app"),
+        Path(".config/autostart"),  # Autostart applications
     ]
     saved_extra_data: list[str] = []
     for rel in extra_data_targets:
@@ -308,6 +396,79 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
                     except OSError:
                         pass
             saved_extra_data.append(str(rel))
+
+    # Additional important security and configuration files/directories
+    important_targets = [
+        Path(".ssh"),  # SSH keys and config
+        Path(".gnupg"),  # GPG keys
+        Path(".pki"),  # SSL certificates
+    ]
+
+    # Conditionally add browser/email client directories if they exist
+    browser_targets = [
+        Path(".mozilla"),  # Firefox profiles (can be huge, consider size)
+        Path(".thunderbird"),  # Email client profiles
+        Path(".config/BraveSoftware/Brave-Browser"),  # Brave browser profiles
+        Path(".config/BraveSoftware/Brave-Browser-Nightly"),  # Brave Nightly profiles
+        Path(".config/google-chrome"),  # Chrome profiles (if used)
+        Path(".config/chromium"),  # Chromium profiles
+    ]
+
+    for rel in important_targets:
+        src_path = home / rel
+        if src_path.exists():
+            # Copy entire directory structure for these important targets
+            for p in src_path.rglob("*"):
+                if p.is_file():
+                    dst = extra_data_root / p.relative_to(home)
+                    ensure_dir(dst.parent)
+                    try:
+                        shutil.copy2(p, dst)
+                    except OSError:
+                        pass
+            saved_extra_data.append(str(rel))
+
+    # Add browser and email client configs only if they exist
+    for rel in browser_targets:
+        src_path = home / rel
+        if src_path.exists():
+            # Check if directory has content before adding
+            try:
+                if any(src_path.rglob("*")):  # If directory has files
+                    for p in src_path.rglob("*"):
+                        if p.is_file():
+                            dst = extra_data_root / p.relative_to(home)
+                            ensure_dir(dst.parent)
+                            try:
+                                shutil.copy2(p, dst)
+                            except OSError:
+                                pass
+                    saved_extra_data.append(str(rel))
+            except (OSError, PermissionError):
+                # Skip if unable to read the directory
+                pass
+
+    # Also backup some important config files in home directory root
+    important_files = [
+        Path(".gitconfig"),
+        Path(".gtkrc-2.0"),
+        Path(".viminfo"),
+        Path(".zshrc"),
+        Path(".bashrc"),
+        Path(".bash_profile"),
+        Path(".p10k.zsh"),  # Powerlevel10k config
+    ]
+
+    for rel_file in important_files:
+        src_file = home / rel_file
+        if src_file.exists():
+            dst = extra_data_root / rel_file
+            ensure_dir(dst.parent)
+            try:
+                shutil.copy2(src_file, dst)
+                saved_extra_data.append(str(rel_file))
+            except OSError:
+                pass
 
     # scope in meta: if override provided, persist it; else default all true
     eff_scope = scope_override or set(SCOPE_KEYS)
@@ -339,6 +500,9 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     print(f"  Dizin: {backup_dir}")
     print(f"  Profil: {profile}")
     print("  İçerik: .knsv, packages.txt, flatpaks.txt, meta.json")
+
+    # Cleanup old backups, keep only the 3 most recent ones
+    cleanup_old_backups(keep_count=3)
 
 
 def do_restore(selected_backup: Path | None = None, scope_override: set[str] | None = None, tag: str | None = None, timestamp_hint: str | None = None,
@@ -475,6 +639,7 @@ def do_quick_backup():
         Path(".config/plasma-org.kde.plasma.desktop-appletsrc"),
         Path(".config/kdeglobals"),
         Path(".config/kwinrc"),
+        Path(".config/mimeapps.list"),  # MIME associations
     ]
     dst_cfg_root = latest_dir / "extra-config"
     ensure_dir(dst_cfg_root)
@@ -499,6 +664,7 @@ def do_quick_backup():
         Path(".local/share/plasma_notes"),
         Path(".local/share/plasma-systemmonitor"),
         Path(".local/zed-preview.app"),
+        Path(".config/autostart"),  # Autostart applications
     ]
     dst_data_root = latest_dir / "extra-data"
     ensure_dir(dst_data_root)
@@ -521,6 +687,58 @@ def do_quick_backup():
                 except OSError:
                     pass
 
+    # Additional important security and configuration files/directories for quick backup
+    important_targets = [
+        Path(".ssh"),  # SSH keys and config
+        Path(".gnupg"),  # GPG keys
+        Path(".pki"),  # SSL certificates
+    ]
+
+    for rel in important_targets:
+        src_path = home / rel
+        if src_path.exists():
+            _sync_tree(src_path, dst_data_root / rel)
+
+    # Conditionally sync browser/email client configs only if they exist
+    browser_targets = [
+        Path(".mozilla"),  # Firefox profiles (can be huge, consider size)
+        Path(".thunderbird"),  # Email client profiles
+        Path(".config/BraveSoftware/Brave-Browser"),  # Brave browser profiles
+        Path(".config/BraveSoftware/Brave-Browser-Nightly"),  # Brave Nightly profiles
+        Path(".config/google-chrome"),  # Chrome profiles (if used)
+        Path(".config/chromium"),  # Chromium profiles
+    ]
+
+    for rel in browser_targets:
+        src_path = home / rel
+        dst_path = dst_data_root / rel
+        if src_path.exists():
+            # Check if directory has content before syncing
+            try:
+                if any(src_path.rglob("*")):  # If directory has files
+                    _sync_tree(src_path, dst_path)
+            except (OSError, PermissionError):
+                # Skip if unable to read the directory
+                pass
+
+    # Also sync important config files in home directory root
+    important_files = [
+        Path(".gitconfig"),
+        Path(".gtkrc-2.0"),
+        Path(".viminfo"),
+        Path(".zshrc"),
+        Path(".bashrc"),
+        Path(".bash_profile"),
+        Path(".p10k.zsh"),  # Powerlevel10k config
+    ]
+
+    for rel_file in important_files:
+        src_file = home / rel_file
+        dst_file = dst_data_root / rel_file
+        if src_file.exists():
+            ensure_dir(dst_file.parent)
+            _copy_if_changed(src_file, dst_file)
+
     # meta.json
     ts = timestamp()
     meta = {
@@ -541,6 +759,13 @@ def do_quick_backup():
             konsave_save_and_export(profile, latest_dir, archive_name=profile)
             # not touching packages/flatpaks in quick mode for speed
     print("\n[✓] Quick Backup tamamlandı: kde-backups/latest/")
+
+    # Save comprehensive system package manifest for quick backup as well
+    print("[i] Quick backup için sistem paketleri listeleniyor (AUR, Flatpak, vs.)...")
+    save_system_package_manifest(latest_dir)
+
+    # Perform cleanup of old regular backups, keep only the 3 most recent ones
+    cleanup_old_backups(keep_count=3)
 
 
 def _list_lines(p: Path) -> list[str]:

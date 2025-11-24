@@ -39,8 +39,12 @@ python scripts/kde_backup_restore.py
 ## Yedek Çıktısı
 - Full Backup: `kde-backups/<timestamp>/`
   - `<profil>.knsv` (konsave profili)
-  - `packages.txt` (paket listesi)
+  - `packages.txt` (ana paket yöneticisi paket listesi)
   - `flatpaks.txt` (flatpak ref listesi)
+  - `system-packages.json` (tüm sistem paketleri - pacman/dnf/apt/zypper + AUR + Flatpak - JSON formatında)
+  - `aur-packages.txt` (AUR paketleri)
+  - `flatpak-packages.txt` (Flatpak paketleri ayrı liste)
+  - `pacman-packages.txt` (pacman paketleri ayrı liste)
   - `extra-config/` (kritik KDE konfigleri)
   - `extra-data/` (seçilmiş kullanıcı verileri)
   - `meta.json`
@@ -76,11 +80,22 @@ python scripts/kde_backup_restore.py
   - `~/.config/plasma-org.kde.plasma.desktop-appletsrc`
   - `~/.config/kdeglobals`
   - `~/.config/kwinrc`
+  - `~/.config/mimeapps.list` (dosya türü ilişkilendirmeleri)
 - `extra-data/` (kullanıcı verileri – örnekler):
   - `~/.local/share/applications/`
   - `~/.local/share/plasma_notes/`
   - `~/.local/share/plasma-systemmonitor/`
   - `~/.local/zed-preview.app/`
+  - `~/.config/autostart/` (otomatik başlatma uygulamaları)
+  - `~/.ssh/` (SSH anahtarları ve yapılandırması)
+  - `~/.gnupg/` (GPG anahtarları)
+  - `~/.pki/` (SSL sertifikaları)
+  - `~/.mozilla/` (Firefox tarayıcı profilleri)
+  - `~/.config/BraveSoftware/` (Brave tarayıcı profilleri - nightly dahil)
+  - `~/.config/google-chrome/` (Chrome tarayıcı profilleri)
+  - `~/.config/chromium/` (Chromium tarayıcı profilleri)
+  - Ana dizindeki yapılandırma dosyaları:
+    - `.gitconfig`, `.gtkrc-2.0`, `.viminfo`, `.zshrc`, `.bashrc`, `.bash_profile`, `.p10k.zsh`
 
 ## CLI Kısayolları
 ```bash
@@ -271,27 +286,37 @@ python scripts/kde_backup_restore.py --compare latest tag:gaming
   - `printf "h\n"` ile konsave export sorusuna otomatik "hayır" denir.
   - Yedek hedefi repo içindeki `kde-backups/latest/` klasörüdür (gitignore’dadır).
 
-## systemd ile Haftalık Quick Backup (Pazar 22:00)
+## systemd ile Haftalık Quick Backup (Cuma 20:00)
 Kullanıcı servisi ve zamanlayıcı (user units):
 
-1) `~/.config/systemd/user/kde-full-backup.service`
+1) `~/.config/systemd/user/kde-weekly-backup.service`
 ```ini
 [Unit]
-Description=KDE Quick Backup (headless-safe)
+Description=Weekly KDE Profile Backup
+After=graphical-session.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup
-ExecStart=/usr/bin/env bash -lc 'printf "h\n" | python3 scripts/kde_backup_restore.py --quick'
+ExecStart=/usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full
+Environment=DISPLAY=:0
+Environment=HOME=%h
+WorkingDirectory=%h/projects/kde-profile-backup
+StandardOutput=journal
+StandardError=journal
+
+# Add a small delay to ensure desktop is fully loaded
+ExecStartPre=/bin/sleep 30
 ```
 
-2) `~/.config/systemd/user/kde-full-backup.timer`
+2) `~/.config/systemd/user/kde-weekly-backup.timer`
 ```ini
 [Unit]
-Description=Run KDE Quick Backup weekly (Sun 22:00)
+Description=Timer for weekly KDE profile backup
+Requires=kde-weekly-backup.service
 
 [Timer]
-OnCalendar=Sun 22:00
+# Run weekly on Friday at 8:00 PM
+OnCalendar=Fri *-*-* 20:00:00
 Persistent=true
 
 [Install]
@@ -300,9 +325,18 @@ WantedBy=timers.target
 
 3) Etkinleştirme ve kontrol:
 ```bash
+# Dosyaları kopyalayın
+mkdir -p ~/.config/systemd/user
+cp /path/to/kde-weekly-backup.service ~/.config/systemd/user/
+cp /path/to/kde-weekly-backup.timer ~/.config/systemd/user/
+
+# Servisleri etkinleştirin ve başlatın
 systemctl --user daemon-reload
-systemctl --user enable --now kde-full-backup.timer
-systemctl --user list-timers --no-pager | grep kde-full-backup
+systemctl --user enable --now kde-weekly-backup.timer
+
+# Kontrol edin
+systemctl --user status kde-weekly-backup.timer
+journalctl --user -u kde-weekly-backup.service -f
 ```
 
 ## Haftalık Full Backup (konsave’li) — cron (oturum açıkken)
@@ -312,6 +346,22 @@ crontab -e
 # Pazar 22:10 (örnek):
 10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
 ```
+
+## 🧹 Otomatik Yedek Temizleme
+- Full ve quick backup işlemleri, sadece en son 3 yedeği koruyacak şekilde otomatik temizlik yapar
+- Eski yedekler otomatik olarak silinir, disk alanı sorununu önler
+- `cleanup_old_backups(keep_count=3)` fonksiyonu ile özelleştirilebilir
+
+## 🌐 Geliştirilmiş Paket Desteği
+- Full backup sırasında tüm sistem paketleri (AUR, Flatpak, pacman/dnf/apt/zypper) JSON formatında kaydedilir
+- `system-packages.json` dosyasında tüm kaynaklardan paket listesi bulunur
+- Tek tek formatlarda da paket listeleri (.txt dosyaları) tutulur
+
+## 🔐 Güvenlik ve Yapılandırma Desteği
+- SSH ve GPG anahtarları otomatik olarak yedeklenir
+- Tarayıcı profilleri (Firefox, Brave, Chrome, Chromium) ve yapılandırmaları desteklenir
+- MIME ilişkilendirmeleri (`~/.config/mimeapps.list`) ve otomatik başlatma uygulamaları (`~/.config/autostart/`) yedeklenir
+- KDE Connect, Thunderbird gibi uygulamaların yapılandırmaları sadece varsa yedeklenir (gereksiz içerik eklenmez)
 
 ## 🧵 Topluluk Profilleri: Paylaşılabilir .knsv temaları ve restore senaryoları
 - Yedeklerinizi `--tags` ile sınıflandırın: `minimal`, `gaming`, `workstation` vb.

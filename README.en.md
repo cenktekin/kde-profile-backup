@@ -10,8 +10,13 @@ A minimal, safe, and scriptable helper for backing up and restoring KDE Plasma s
 - konsave profile export/import (`.knsv`).
 - Distro packages and Flatpak apps lists for reproducible setups.
 - Extra layers beyond konsave:
-  - `extra-config/`: critical KDE config files (e.g., `kdeglobals`, `kwinrc`, applets layout).
-  - `extra-data/`: selected user data directories (e.g., `.local/share/applications/`, Plasma notes/system monitor, `.local/zed-preview.app`).
+  - `extra-config/`: critical KDE config files (e.g., `kdeglobals`, `kwinrc`, applets layout, `mimeapps.list`).
+  - `extra-data/`: selected user data directories including security configs, browser profiles, and startup apps:
+    - `.local/share/applications/`, `.local/share/plasma_notes/`, `.local/share/plasma-systemmonitor/`, `.local/zed-preview.app`
+    - `.config/autostart/` (autostart applications)
+    - Security: `.ssh/`, `.gnupg/`, `.pki/`
+    - Browsers: `.mozilla/`, `.config/BraveSoftware/`, `.config/google-chrome/`, `.config/chromium/`
+    - Shell configs: `.gitconfig`, `.gtkrc-2.0`, `.viminfo`, `.zshrc`, `.bashrc`, `.bash_profile`, `.p10k.zsh`
 - Quick incremental backup to `latest/` (fast weekly snapshot of extra-*/ layers).
 - Restore Preview: see what would change before applying.
 - Tagging & Scope: label backups with tags and choose which parts to apply on restore/preview.
@@ -152,15 +157,26 @@ kde-backups/
   <timestamp>/
     meta.json
     20250829_kde.knsv
-    packages.txt
-    flatpaks.txt
+    packages.txt (main package manager list)
+    flatpaks.txt (flatpak ref list)
+    system-packages.json (all system packages - pacman/dnf/apt/zypper + AUR + Flatpak - JSON format)
+    aur-packages.txt (AUR packages list)
+    flatpak-packages.txt (Flatpak packages list)
+    pacman-packages.txt (pacman packages list)
     extra-config/
       .config/...
     extra-data/
       .local/share/...
+      .config/autostart/ (autostart apps)
+      .ssh/, .gnupg/, .pki/
+      .mozilla/, .config/BraveSoftware/, .config/google-chrome/, .config/chromium/
   latest/
     meta.json
     [optional] <profile>.knsv
+    system-packages.json
+    aur-packages.txt
+    pacman-packages.txt
+    flatpak-packages.txt
     extra-config/
     extra-data/
 ```
@@ -201,27 +217,37 @@ systemctl --user enable --now kde-quick-backup.timer
   - `printf "h\n"` answers the konsave export prompt with “no”.
   - Target directory is `kde-backups/latest/` (gitignored).
 
-## systemd: Weekly Quick Backup (Sunday 22:00)
-User units configured to run on Sundays at 22:00:
+## systemd: Weekly Full Backup (Friday 20:00)
+User units configured to run on Fridays at 20:00 (8:00 PM):
 
-1) `~/.config/systemd/user/kde-full-backup.service`
+1) `~/.config/systemd/user/kde-weekly-backup.service`
 ```ini
 [Unit]
-Description=KDE Quick Backup (headless-safe)
+Description=Weekly KDE Profile Backup
+After=graphical-session.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup
-ExecStart=/usr/bin/env bash -lc 'printf "h\n" | python3 scripts/kde_backup_restore.py --quick'
+ExecStart=/usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full
+Environment=DISPLAY=:0
+Environment=HOME=%h
+WorkingDirectory=%h/projects/kde-profile-backup
+StandardOutput=journal
+StandardError=journal
+
+# Add a small delay to ensure desktop is fully loaded
+ExecStartPre=/bin/sleep 30
 ```
 
-2) `~/.config/systemd/user/kde-full-backup.timer`
+2) `~/.config/systemd/user/kde-weekly-backup.timer`
 ```ini
 [Unit]
-Description=Run KDE Quick Backup weekly (Sun 22:00)
+Description=Timer for weekly KDE profile backup
+Requires=kde-weekly-backup.service
 
 [Timer]
-OnCalendar=Sun 22:00
+# Run weekly on Friday at 8:00 PM
+OnCalendar=Fri *-*-* 20:00:00
 Persistent=true
 
 [Install]
@@ -230,9 +256,18 @@ WantedBy=timers.target
 
 3) Reload and enable
 ```bash
+# Copy the files
+mkdir -p ~/.config/systemd/user
+cp /path/to/kde-weekly-backup.service ~/.config/systemd/user/
+cp /path/to/kde-weekly-backup.timer ~/.config/systemd/user/
+
+# Enable the services
 systemctl --user daemon-reload
-systemctl --user enable --now kde-full-backup.timer
-systemctl --user list-timers --no-pager | grep kde-full-backup
+systemctl --user enable --now kde-weekly-backup.timer
+
+# Check status
+systemctl --user status kde-weekly-backup.timer
+journalctl --user -u kde-weekly-backup.service -f
 ```
 
 ## Weekly Full Backup (with konsave) via cron (while logged in)
@@ -242,6 +277,22 @@ crontab -e
 # Sunday 22:10 (example):
 10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
 ```
+
+## 🧹 Automatic Backup Cleanup
+- Both full and quick backup operations automatically clean up old backups, keeping only the latest 3
+- Old backups are automatically deleted, preventing disk space issues
+- Configurable via the `cleanup_old_backups(keep_count=3)` function
+
+## 🌐 Enhanced Package Support
+- During full backup, all system packages are saved in JSON format (AUR, Flatpak, pacman/dnf/apt/zypper)
+- Complete package list from all sources is stored in `system-packages.json`
+- Individual package lists are also kept in separate .txt files
+
+## 🔐 Security and Configuration Support
+- SSH and GPG keys are automatically backed up
+- Browser profiles (Firefox, Brave, Chrome, Chromium) and their configurations are supported
+- MIME associations (`~/.config/mimeapps.list`) and autostart apps (`~/.config/autostart/`) are backed up
+- App configurations are only backed up if they exist (no unnecessary content is added)
 
 ## Notes & Safety
 - The script does NOT automatically install packages/flatpaks; it prints commands.
