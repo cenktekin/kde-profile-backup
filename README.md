@@ -281,7 +281,7 @@ python scripts/kde_backup_restore.py --compare latest tag:gaming
   `~/.config/topgrade.toml` içine ekleyin:
   ```toml
   [pre_commands]
-  "KDE Quick Backup" = "bash -lc 'cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
+  "KDE Quick Backup" = "bash -lc 'cd $HOME/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
   ```
   - `printf "h\n"` ile konsave export sorusuna otomatik "hayır" denir.
   - Yedek hedefi repo içindeki `kde-backups/latest/` klasörüdür (gitignore’dadır).
@@ -297,9 +297,10 @@ After=graphical-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full
+ExecStart=/usr/bin/env bash -lc 'export PATH="$HOME/.local/bin:$HOME/.local/share/pipx/venvs/konsave/bin:/usr/local/bin:/usr/bin:/bin" && printf "\n" | /usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full'
 Environment=DISPLAY=:0
 Environment=HOME=%h
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
 WorkingDirectory=%h/projects/kde-profile-backup
 StandardOutput=journal
 StandardError=journal
@@ -344,7 +345,7 @@ journalctl --user -u kde-weekly-backup.service -f
 ```bash
 crontab -e
 # Pazar 22:10 (örnek):
-10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
+ 10 22 * * 0 cd $HOME/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
 ```
 
 ## 🧹 Otomatik Yedek Temizleme

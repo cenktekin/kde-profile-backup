@@ -1,0 +1,7 @@
+# Weekly KDE profile backup using cron
+# This will run every Sunday at 2:00 AM
+
+0 2 * * 0 cd /home/$(whoami)/projects/kde-profile-backup && /usr/bin/python3 scripts/kde_backup_restore.py --full 2>&1 | logger -t kde-backup
+
+# Alternative: If you prefer a separate script file
+# 0 2 * * 0 /home/$(whoami)/projects/kde-profile-backup/backup-weekly.sh 2>&1 | logger -t kde-backup

@@ -1,0 +1,11 @@
+[Unit]
+Description=Timer for weekly KDE profile backup
+Requires=kde-weekly-backup.service
+
+[Timer]
+# Run weekly on Friday at 8:00 PM
+OnCalendar=Fri *-*-* 20:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

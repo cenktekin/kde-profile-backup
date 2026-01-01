@@ -212,7 +212,7 @@ systemctl --user enable --now kde-quick-backup.timer
 - Run a quick backup automatically before Topgrade upgrades. Add to `~/.config/topgrade.toml`:
   ```toml
   [pre_commands]
-  "KDE Quick Backup" = "bash -lc 'cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
+  "KDE Quick Backup" = "bash -lc 'cd $HOME/projects/kde-profile-backup && printf \"h\\n\" | python3 scripts/kde_backup_restore.py --quick'"
   ```
   - `printf "h\n"` answers the konsave export prompt with “no”.
   - Target directory is `kde-backups/latest/` (gitignored).
@@ -228,9 +228,10 @@ After=graphical-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full
+ExecStart=/usr/bin/env bash -lc 'export PATH="$HOME/.local/bin:$HOME/.local/share/pipx/venvs/konsave/bin:/usr/local/bin:/usr/bin:/bin" && printf "\n" | /usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full'
 Environment=DISPLAY=:0
 Environment=HOME=%h
+Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
 WorkingDirectory=%h/projects/kde-profile-backup
 StandardOutput=journal
 StandardError=journal
@@ -275,7 +276,7 @@ Since konsave may require an active session, schedule full backups with cron whe
 ```bash
 crontab -e
 # Sunday 22:10 (example):
-10 22 * * 0 cd /mnt/ee8bf59b-815d-47bd-b440-5ba8ae82ff4a/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
+10 22 * * 0 cd $HOME/projects/kde-profile-backup && printf "\n" | python3 scripts/kde_backup_restore.py --full
 ```
 
 ## 🧹 Automatic Backup Cleanup
