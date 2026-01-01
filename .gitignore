@@ -6,3 +6,4 @@ draft_*
 kde-backups/
 __pycache__/
 *.pyc
+*_input.txt

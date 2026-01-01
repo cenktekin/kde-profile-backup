@@ -1,0 +1,36 @@
+name: KDE Backup CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'scripts/**/*.py'
+      - '.github/workflows/*.yml'
+  pull_request:
+    paths:
+      - 'scripts/**/*.py'
+      - '.github/workflows/*.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run smoke tests
+        working-directory: ./scripts
+        run: |
+          python3 tests_smoke.py
+
+      - name: Check Python syntax
+        run: python3 -m py_compile scripts/kde_backup_restore.py
+
+      - name: Check shell script syntax
+        run: |
+          bash -n scripts/kde_backup_wrapper.sh
+          bash -n scripts/tests_smoke.py
