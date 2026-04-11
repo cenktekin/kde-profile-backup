@@ -286,8 +286,15 @@ python scripts/kde_backup_restore.py --compare latest tag:gaming
   - `printf "h\n"` ile konsave export sorusuna otomatik "hayır" denir.
   - Yedek hedefi repo içindeki `kde-backups/latest/` klasörüdür (gitignore’dadır).
 
-## systemd ile Haftalık Quick Backup (Cuma 20:00)
-Kullanıcı servisi ve zamanlayıcı (user units):
+## systemd ile Haftalık Full Backup (Cuma 21:00)
+Hızlı kurulum için `setup-systemd.sh` çalıştırmanız yeterli:
+```bash
+bash setup-systemd.sh
+```
+
+Bu, `kde-weekly-backup.service` ve `kde-weekly-backup.timer` dosyalarını `~/.config/systemd/user/` altına kopyalar ve timer'ı aktif eder.
+
+Manuel kurulum:
 
 1) `~/.config/systemd/user/kde-weekly-backup.service`
 ```ini
@@ -316,8 +323,8 @@ Description=Timer for weekly KDE profile backup
 Requires=kde-weekly-backup.service
 
 [Timer]
-# Run weekly on Friday at 8:00 PM
-OnCalendar=Fri *-*-* 20:00:00
+# Run weekly on Friday at 9:00 PM
+OnCalendar=Fri *-*-* 21:00:00
 Persistent=true
 
 [Install]
@@ -367,3 +374,13 @@ crontab -e
 ## 🧵 Topluluk Profilleri: Paylaşılabilir .knsv temaları ve restore senaryoları
 - Yedeklerinizi `--tags` ile sınıflandırın: `minimal`, `gaming`, `workstation` vb.
 - Restore sırasında `--tag gaming` gibi etiketlerle doğru yedeği seçin.
+
+## Geliştirici Notları
+- Yedeklenen dizin/klasör listeleri `scripts/kde_backup_restore.py` dosyasının başında sabit olarak tanımlıdır:
+  - `EXTRA_CONFIG_FILES` — KDE config dosyaları
+  - `EXTRA_DATA_DIRS` — kullanıcı veri dizinleri
+  - `SECURITY_DIRS` — SSH/GPG/PKI dizinleri
+  - `BROWSER_DIRS` — tarayıcı profil dizinleri
+  - `HOME_CONFIG_FILES` — ev dizini config dosyaları
+- Yeni bir hedef eklemek için ilgili sabite `Path("...")` olarak eklemeniz yeterli.
+- Ajan tabanlı geliştirme için `AGENTS.md` dosyasına bakın.

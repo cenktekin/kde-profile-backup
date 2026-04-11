@@ -6,6 +6,7 @@ Minimal KDE backup/restore helper using konsave + package/flatpak lists.
 
 No external Python deps; relies on shell tools: konsave, rpm/apt/pacman/zypper, flatpak.
 """
+
 import sys
 import json
 import shutil
@@ -22,7 +23,55 @@ import filecmp
 BACKUP_ROOT = Path.cwd() / "kde-backups"
 DEFAULT_PROFILE = "kde-profile"
 
+# --------------------- backup target lists ---------------------
+
+# Extra KDE config files (copied individually)
+EXTRA_CONFIG_FILES: list[Path] = [
+    Path(".config/plasma-org.kde.plasma.desktop-appletsrc"),
+    Path(".config/kdeglobals"),
+    Path(".config/kwinrc"),
+    Path(".config/mimeapps.list"),
+]
+
+# Extra data directories (synced recursively)
+EXTRA_DATA_DIRS: list[Path] = [
+    Path(".local/share/applications"),
+    Path(".local/share/plasma_notes"),
+    Path(".local/share/plasma-systemmonitor"),
+    Path(".local/zed-preview.app"),
+    Path(".config/autostart"),
+]
+
+# Security / credential directories
+SECURITY_DIRS: list[Path] = [
+    Path(".ssh"),
+    Path(".gnupg"),
+    Path(".pki"),
+]
+
+# Browser profile directories (synced if they exist and have content)
+BROWSER_DIRS: list[Path] = [
+    Path(".mozilla"),
+    Path(".thunderbird"),
+    Path(".config/BraveSoftware/Brave-Browser"),
+    Path(".config/BraveSoftware/Brave-Browser-Nightly"),
+    Path(".config/google-chrome"),
+    Path(".config/chromium"),
+]
+
+# Home-directory config files
+HOME_CONFIG_FILES: list[Path] = [
+    Path(".gitconfig"),
+    Path(".gtkrc-2.0"),
+    Path(".viminfo"),
+    Path(".zshrc"),
+    Path(".bashrc"),
+    Path(".bash_profile"),
+    Path(".p10k.zsh"),
+]
+
 # --------------------- helpers ---------------------
+
 
 def run(cmd, check=True, capture_output=True, text=True):
     return subprocess.run(cmd, check=check, capture_output=capture_output, text=text)
@@ -42,6 +91,7 @@ def timestamp() -> str:
 
 # --------------------- sync helpers ---------------------
 
+
 def _copy_if_changed(src: Path, dst: Path):
     """Copy file if destination missing or size/mtime differ."""
     if not dst.exists():
@@ -51,7 +101,9 @@ def _copy_if_changed(src: Path, dst: Path):
     try:
         src_stat = src.stat()
         dst_stat = dst.stat()
-        if src_stat.st_size != dst_stat.st_size or int(src_stat.st_mtime) != int(dst_stat.st_mtime):
+        if src_stat.st_size != dst_stat.st_size or int(src_stat.st_mtime) != int(
+            dst_stat.st_mtime
+        ):
             ensure_dir(dst.parent)
             shutil.copy2(src, dst)
     except OSError:
@@ -118,19 +170,28 @@ def detect_package_managers() -> dict[str, str]:
         pm_info["rpm"] = "rpm"
     return pm_info
 
+
 def list_installed_packages(pm: str) -> list[str]:
     try:
         if pm == "dnf":
             # Use rpm to get clean names
             res = run(["rpm", "-qa", "--qf", "%{NAME}\n"])  # type: ignore
-            return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+            return sorted(
+                set(line.strip() for line in res.stdout.splitlines() if line.strip())
+            )
         if pm == "rpm":
             res = run(["rpm", "-qa", "--qf", "%{NAME}\n"])  # type: ignore
-            return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+            return sorted(
+                set(line.strip() for line in res.stdout.splitlines() if line.strip())
+            )
         if pm == "apt":
             if which("apt-mark"):
                 res = run(["apt-mark", "showmanual"])  # user-installed
-                return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+                return sorted(
+                    set(
+                        line.strip() for line in res.stdout.splitlines() if line.strip()
+                    )
+                )
             # Fallback: dpkg -l
             res = run(["dpkg", "-l"])  # noisy, but usable
             pkgs = []
@@ -141,15 +202,29 @@ def list_installed_packages(pm: str) -> list[str]:
                         pkgs.append(parts[1])
             return sorted(set(pkgs))
         if pm == "pacman":
-            res = run(["bash", "-lc", "pacman -Qqe | sed 's/$//'"],)  # explicit + deps
-            return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+            # explicit + deps
+            res = run(
+                ["bash", "-lc", "pacman -Qqe | sed 's/$//'"],
+            )
+            return sorted(
+                set(line.strip() for line in res.stdout.splitlines() if line.strip())
+            )
         if pm == "zypper":
             # Extract package names column
-            res = run(["bash", "-lc", "zypper se -i | awk 'NR>2 && $1!~/(Loading|S|#)/ {print $3}'"],)
-            return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+            res = run(
+                [
+                    "bash",
+                    "-lc",
+                    "zypper se -i | awk 'NR>2 && $1!~/(Loading|S|#)/ {print $3}'",
+                ],
+            )
+            return sorted(
+                set(line.strip() for line in res.stdout.splitlines() if line.strip())
+            )
     except subprocess.CalledProcessError:
         pass
     return []
+
 
 def list_installed_aur_packages() -> list[str]:
     """List packages installed via AUR (if applicable)."""
@@ -159,9 +234,12 @@ def list_installed_aur_packages() -> list[str]:
     try:
         aur_helper = "yay" if which("yay") else "paru"
         res = run([aur_helper, "-Qm"])  # List AUR packages only
-        return sorted(set(line.split()[0] for line in res.stdout.splitlines() if line.strip()))
+        return sorted(
+            set(line.split()[0] for line in res.stdout.splitlines() if line.strip())
+        )
     except subprocess.CalledProcessError:
         return []
+
 
 def list_all_system_packages() -> dict[str, list[str]]:
     """List all installed packages from all available package managers."""
@@ -184,6 +262,7 @@ def list_all_system_packages() -> dict[str, list[str]]:
 
     return all_packages
 
+
 def save_system_package_manifest(backup_dir: Path):
     """Save a comprehensive manifest of all installed packages to the backup."""
     all_packages = list_all_system_packages()
@@ -193,7 +272,9 @@ def save_system_package_manifest(backup_dir: Path):
     # Also save as individual files for easier processing
     for pkg_type, pkg_list in all_packages.items():
         if pkg_list:  # Only save if the package list is not empty
-            write_text(backup_dir / f"{pkg_type}-packages.txt", "\n".join(pkg_list) + "\n")
+            write_text(
+                backup_dir / f"{pkg_type}-packages.txt", "\n".join(pkg_list) + "\n"
+            )
 
 
 def list_flatpaks() -> list[str]:
@@ -201,7 +282,9 @@ def list_flatpaks() -> list[str]:
         return []
     try:
         res = run(["flatpak", "list", "--app", "--columns=ref"])
-        return sorted(set(line.strip() for line in res.stdout.splitlines() if line.strip()))
+        return sorted(
+            set(line.strip() for line in res.stdout.splitlines() if line.strip())
+        )
     except subprocess.CalledProcessError:
         return []
 
@@ -225,7 +308,9 @@ def parse_scope(scope_str: str | None) -> set[str] | None:
     parts = {p.strip() for p in scope_str.split(",") if p.strip()}
     invalid = parts - SCOPE_KEYS
     if invalid:
-        print(f"[!] Geçersiz scope anahtarları: {', '.join(sorted(invalid))}\n    Geçerli: {', '.join(sorted(SCOPE_KEYS))}")
+        print(
+            f"[!] Geçersiz scope anahtarları: {', '.join(sorted(invalid))}\n    Geçerli: {', '.join(sorted(SCOPE_KEYS))}"
+        )
         parts = parts & SCOPE_KEYS
     return parts
 
@@ -267,26 +352,53 @@ def _find_knsv(backup_dir: Path) -> Path | None:
 
 # --------------------- konsave ops ---------------------
 
+
+def get_konsave_path():
+    # Try finding in PATH first
+    p = shutil.which("konsave")
+    if p:
+        return p
+    # Check common local locations
+    home = Path.home()
+    local_bins = [
+        home / ".local/bin/konsave",
+        home / ".local/share/pipx/venvs/konsave/bin/konsave",
+    ]
+    for lb in local_bins:
+        if lb.exists():
+            return str(lb)
+    return "konsave"  # Fallback to name
+
+
+KONSAVE = get_konsave_path()
+
+
 def check_konsave():
-    if not which("konsave"):
-        print("[!] konsave bulunamadı. Kurulum: python -m pip install konsave", file=sys.stderr)
+    if not which(KONSAVE) and not Path(KONSAVE).exists():
+        print(
+            f"[!] konsave bulunamadı (Path: {KONSAVE}). Kurulum: python -m pip install konsave",
+            file=sys.stderr,
+        )
         return False
     return True
 
 
-KONSAVE = "konsave"
 KONSAVE_EXTRA_ARGS: list[str] = []  # filled by --konsave-args
 
 
-def konsave_save_and_export(profile: str, backup_dir: Path, archive_name: str = DEFAULT_PROFILE) -> Path:
+def konsave_save_and_export(
+    profile: str, backup_dir: Path, archive_name: str = DEFAULT_PROFILE
+) -> Path:
     # Save profile (overwrite allowed)
-    cmd_save = [KONSAVE, "-s", profile, "-f"]  # Use -s flag and -f to force overwrite
+    # Use -s flag and -f to force overwrite
+    cmd_save = [KONSAVE, "-s", profile, "-f"]
     if KONSAVE_EXTRA_ARGS:
         cmd_save += KONSAVE_EXTRA_ARGS
     run(cmd_save)
     export_path = backup_dir / f"{archive_name}.knsv"
     # Use -d to specify the output directory, and -n for the archive name without .knsv extension
-    cmd_export = [KONSAVE, "-e", profile, "-d", str(backup_dir), "-n", archive_name]  # Use -e flag for export, -d for directory, -n for archive name
+    # Use -e flag for export, -d for directory, -n for archive name
+    cmd_export = [KONSAVE, "-e", profile, "-d", str(backup_dir), "-n", archive_name]
     if KONSAVE_EXTRA_ARGS:
         cmd_export += KONSAVE_EXTRA_ARGS
     run(cmd_export)
@@ -301,15 +413,21 @@ def konsave_import_and_apply(knsv_path: Path, profile: str):
 
 # --------------------- backup / restore ---------------------
 
+
 def cleanup_old_backups(keep_count: int = 3):
     """Keep only the most recent backups and remove older ones."""
     if not BACKUP_ROOT.exists():
         return
 
     # Get all backup directories sorted by name (which includes timestamp)
-    backup_dirs = [d for d in BACKUP_ROOT.iterdir()
-                   if d.is_dir() and d.name != "latest"  # Don't delete "latest" symlink/directory
-                   and d.name not in ["archive", "scripts"]]  # Exclude other known directories
+    backup_dirs = [
+        d
+        for d in BACKUP_ROOT.iterdir()
+        if d.is_dir()
+        and d.name != "latest"  # Don't delete "latest" symlink/directory
+        # Exclude other known directories
+        and d.name not in ["archive", "scripts"]
+    ]
 
     # Sort by name which should sort chronologically due to timestamp format
     backup_dirs.sort(key=lambda x: x.name, reverse=True)
@@ -317,7 +435,6 @@ def cleanup_old_backups(keep_count: int = 3):
     # Remove all except the most recent 'keep_count'
     for old_dir in backup_dirs[keep_count:]:
         try:
-            import shutil
             shutil.rmtree(old_dir)
             print(f"[i] Eski yedek silindi: {old_dir.name}")
         except OSError as e:
@@ -333,7 +450,11 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     backup_dir = BACKUP_ROOT / ts
     ensure_dir(backup_dir)
 
-    profile = input(f"Profil adı (Enter={DEFAULT_PROFILE}): ") or DEFAULT_PROFILE
+    if sys.stdin.isatty():
+        profile = input(f"Profil adı (Enter={DEFAULT_PROFILE}): ") or DEFAULT_PROFILE
+    else:
+        profile = DEFAULT_PROFILE
+        print(f"[i] Non-interactive mode: using default profile '{profile}'")
 
     print("[i] KDE ayarları export ediliyor (konsave)...")
     knsv = konsave_save_and_export(profile, backup_dir, archive_name=profile)
@@ -354,14 +475,8 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     extra_root = backup_dir / "extra-config"
     ensure_dir(extra_root)
     home = Path.home()
-    extra_targets = [
-        Path(".config/plasma-org.kde.plasma.desktop-appletsrc"),
-        Path(".config/kdeglobals"),
-        Path(".config/kwinrc"),
-        Path(".config/mimeapps.list"),  # MIME associations
-    ]
     saved_extra: list[str] = []
-    for rel in extra_targets:
+    for rel in EXTRA_CONFIG_FILES:
         src = home / rel
         if src.exists():
             dst = extra_root / rel
@@ -375,15 +490,8 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     # Extra-data: kullanıcının önemli gördüğü veri klasörleri
     extra_data_root = backup_dir / "extra-data"
     ensure_dir(extra_data_root)
-    extra_data_targets = [
-        Path(".local/share/applications"),
-        Path(".local/share/plasma_notes"),
-        Path(".local/share/plasma-systemmonitor"),
-        Path(".local/zed-preview.app"),
-        Path(".config/autostart"),  # Autostart applications
-    ]
     saved_extra_data: list[str] = []
-    for rel in extra_data_targets:
+    for rel in EXTRA_DATA_DIRS:
         src_dir = home / rel
         if src_dir.exists():
             # Klasör ağacını file-by-file kopyala (izinler korunarak)
@@ -398,23 +506,7 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
             saved_extra_data.append(str(rel))
 
     # Additional important security and configuration files/directories
-    important_targets = [
-        Path(".ssh"),  # SSH keys and config
-        Path(".gnupg"),  # GPG keys
-        Path(".pki"),  # SSL certificates
-    ]
-
-    # Conditionally add browser/email client directories if they exist
-    browser_targets = [
-        Path(".mozilla"),  # Firefox profiles (can be huge, consider size)
-        Path(".thunderbird"),  # Email client profiles
-        Path(".config/BraveSoftware/Brave-Browser"),  # Brave browser profiles
-        Path(".config/BraveSoftware/Brave-Browser-Nightly"),  # Brave Nightly profiles
-        Path(".config/google-chrome"),  # Chrome profiles (if used)
-        Path(".config/chromium"),  # Chromium profiles
-    ]
-
-    for rel in important_targets:
+    for rel in SECURITY_DIRS:
         src_path = home / rel
         if src_path.exists():
             # Copy entire directory structure for these important targets
@@ -429,7 +521,7 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
             saved_extra_data.append(str(rel))
 
     # Add browser and email client configs only if they exist
-    for rel in browser_targets:
+    for rel in BROWSER_DIRS:
         src_path = home / rel
         if src_path.exists():
             # Check if directory has content before adding
@@ -449,17 +541,7 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
                 pass
 
     # Also backup some important config files in home directory root
-    important_files = [
-        Path(".gitconfig"),
-        Path(".gtkrc-2.0"),
-        Path(".viminfo"),
-        Path(".zshrc"),
-        Path(".bashrc"),
-        Path(".bash_profile"),
-        Path(".p10k.zsh"),  # Powerlevel10k config
-    ]
-
-    for rel_file in important_files:
+    for rel_file in HOME_CONFIG_FILES:
         src_file = home / rel_file
         if src_file.exists():
             dst = extra_data_root / rel_file
@@ -505,8 +587,14 @@ def do_backup(tags: list[str] | None = None, scope_override: set[str] | None = N
     cleanup_old_backups(keep_count=3)
 
 
-def do_restore(selected_backup: Path | None = None, scope_override: set[str] | None = None, tag: str | None = None, timestamp_hint: str | None = None,
-               yes_extra_config: bool | None = None, yes_extra_data: bool | None = None):
+def do_restore(
+    selected_backup: Path | None = None,
+    scope_override: set[str] | None = None,
+    tag: str | None = None,
+    timestamp_hint: str | None = None,
+    yes_extra_config: bool | None = None,
+    yes_extra_data: bool | None = None,
+):
     """Restore flow respecting scope and selection by tag/timestamp.
     - selected_backup: direct path to backup dir
     - tag: if provided, pick latest backup with this tag
@@ -521,7 +609,13 @@ def do_restore(selected_backup: Path | None = None, scope_override: set[str] | N
         elif timestamp_hint == "latest":
             backup_dir = BACKUP_ROOT / "latest"
         elif timestamp_hint:
-            cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(timestamp_hint)])
+            cands = sorted(
+                [
+                    p
+                    for p in BACKUP_ROOT.iterdir()
+                    if p.is_dir() and p.name.startswith(timestamp_hint)
+                ]
+            )
             backup_dir = cands[-1] if cands else None
         else:
             backup_dir = pick_backup_dir()
@@ -555,16 +649,28 @@ def do_restore(selected_backup: Path | None = None, scope_override: set[str] | N
             if to_install:
                 if pm == "dnf" or pm == "rpm":
                     print("\n[Pkg] Kurulum komutu (örnek):")
-                    print("sudo dnf install -y ", " ".join(shlex.quote(x) for x in to_install))
+                    print(
+                        "sudo dnf install -y ",
+                        " ".join(shlex.quote(x) for x in to_install),
+                    )
                 elif pm == "apt":
                     print("\n[Pkg] Kurulum komutu (örnek):")
-                    print("sudo apt install -y ", " ".join(shlex.quote(x) for x in to_install))
+                    print(
+                        "sudo apt install -y ",
+                        " ".join(shlex.quote(x) for x in to_install),
+                    )
                 elif pm == "pacman":
                     print("\n[Pkg] Kurulum komutu (örnek):")
-                    print("sudo pacman -S --needed ", " ".join(shlex.quote(x) for x in to_install))
+                    print(
+                        "sudo pacman -S --needed ",
+                        " ".join(shlex.quote(x) for x in to_install),
+                    )
                 elif pm == "zypper":
                     print("\n[Pkg] Kurulum komutu (örnek):")
-                    print("sudo zypper install -y ", " ".join(shlex.quote(x) for x in to_install))
+                    print(
+                        "sudo zypper install -y ",
+                        " ".join(shlex.quote(x) for x in to_install),
+                    )
     else:
         print("[i] Scope gereği paket adımı atlandı.")
 
@@ -576,7 +682,10 @@ def do_restore(selected_backup: Path | None = None, scope_override: set[str] | N
             to_install_fp = sorted(desired_fp - current_fp)
             if to_install_fp:
                 print("\n[Flatpak] Kurulum komutu (örnek):")
-                print("flatpak install -y --noninteractive ", " ".join(shlex.quote(x) for x in to_install_fp))
+                print(
+                    "flatpak install -y --noninteractive ",
+                    " ".join(shlex.quote(x) for x in to_install_fp),
+                )
     else:
         print("[i] Scope gereği flatpak adımı atlandı.")
 
@@ -584,7 +693,13 @@ def do_restore(selected_backup: Path | None = None, scope_override: set[str] | N
     extra_root = backup_dir / "extra-config"
     if extra_root.exists() and "extra_config" in scope:
         if yes_extra_config is None:
-            ans = input("\nEk KDE config dosyalarını (extra-config) yerine kopyalayayım mı? (E/h): ").strip().lower()
+            ans = (
+                input(
+                    "\nEk KDE config dosyalarını (extra-config) yerine kopyalayayım mı? (E/h): "
+                )
+                .strip()
+                .lower()
+            )
             do_copy = ans in {"e", "evet", "y", "yes"}
         else:
             do_copy = yes_extra_config
@@ -606,7 +721,13 @@ def do_restore(selected_backup: Path | None = None, scope_override: set[str] | N
     extra_data_root = backup_dir / "extra-data"
     if extra_data_root.exists() and "extra_data" in scope:
         if yes_extra_data is None:
-            ans = input("Ek veri klasörlerini (extra-data) yerine kopyalayayım mı? (E/h): ").strip().lower()
+            ans = (
+                input(
+                    "Ek veri klasörlerini (extra-data) yerine kopyalayayım mı? (E/h): "
+                )
+                .strip()
+                .lower()
+            )
             do_copy = ans in {"e", "evet", "y", "yes"}
         else:
             do_copy = yes_extra_data
@@ -704,7 +825,8 @@ def do_quick_backup():
         Path(".mozilla"),  # Firefox profiles (can be huge, consider size)
         Path(".thunderbird"),  # Email client profiles
         Path(".config/BraveSoftware/Brave-Browser"),  # Brave browser profiles
-        Path(".config/BraveSoftware/Brave-Browser-Nightly"),  # Brave Nightly profiles
+        # Brave Nightly profiles
+        Path(".config/BraveSoftware/Brave-Browser-Nightly"),
         Path(".config/google-chrome"),  # Chrome profiles (if used)
         Path(".config/chromium"),  # Chromium profiles
     ]
@@ -752,9 +874,15 @@ def do_quick_backup():
 
     # optional konsave export
     if check_konsave():
-        ans = input("Konsave export da yapılsın mı? (varsayılan: h) (E/h): ").strip().lower()
+        ans = (
+            input("Konsave export da yapılsın mı? (varsayılan: h) (E/h): ")
+            .strip()
+            .lower()
+        )
         if ans in {"e", "evet", "y", "yes"}:
-            profile = input(f"Profil adı (Enter={DEFAULT_PROFILE}): ") or DEFAULT_PROFILE
+            profile = (
+                input(f"Profil adı (Enter={DEFAULT_PROFILE}): ") or DEFAULT_PROFILE
+            )
             print("[i] KDE ayarları export ediliyor (konsave, hızlı)...")
             konsave_save_and_export(profile, latest_dir, archive_name=profile)
             # not touching packages/flatpaks in quick mode for speed
@@ -776,12 +904,15 @@ def _list_lines(p: Path) -> list[str]:
 
 def _diff_sets(desired: set[str], current: set[str]) -> tuple[set[str], set[str]]:
     to_install = desired - current
-    missing = desired - current
     to_remove = current - desired
     return to_install, to_remove
 
 
-def do_preview(target: str | None = None, scope_override: set[str] | None = None, tag: str | None = None):
+def do_preview(
+    target: str | None = None,
+    scope_override: set[str] | None = None,
+    tag: str | None = None,
+):
     """Show what would change if restore is run for the selected backup.
     target: 'latest' or a timestamp prefix (e.g., 20250829-151354)."""
     # Resolve backup dir
@@ -795,7 +926,13 @@ def do_preview(target: str | None = None, scope_override: set[str] | None = None
             if tag:
                 backup_dir = find_backup_by_tag(tag)
             elif target:
-                cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(target)])
+                cands = sorted(
+                    [
+                        p
+                        for p in BACKUP_ROOT.iterdir()
+                        if p.is_dir() and p.name.startswith(target)
+                    ]
+                )
                 backup_dir = cands[-1] if cands else None
     if not backup_dir or not backup_dir.exists():
         print("[!] Önizleme için yedek bulunamadı.")
@@ -808,7 +945,11 @@ def do_preview(target: str | None = None, scope_override: set[str] | None = None
     # Packages diff (scope)
     pkg_file = backup_dir / "packages.txt"
     desired_pkgs = set(_list_lines(pkg_file))
-    current_pkgs = set(list_installed_packages(detect_pkg_manager())) if desired_pkgs and ("packages" in scope) else set()
+    current_pkgs = (
+        set(list_installed_packages(detect_pkg_manager()))
+        if desired_pkgs and ("packages" in scope)
+        else set()
+    )
     to_install = desired_pkgs - current_pkgs
     to_remove = current_pkgs - desired_pkgs if desired_pkgs else set()
 
@@ -866,29 +1007,39 @@ def do_preview(target: str | None = None, scope_override: set[str] | None = None
         print("  • Konsave uygulanmayacak veya profil yok.")
     # Packages
     if desired_pkgs and ("packages" in scope):
-        print(f"  • Paketler: kurulacak {len(to_install)}, (isteğe bağlı) kaldırılabilir {len(to_remove)}")
+        print(
+            f"  • Paketler: kurulacak {len(to_install)}, (isteğe bağlı) kaldırılabilir {len(to_remove)}"
+        )
         if to_install:
             print("    Örnek (install):", ", ".join(sorted(list(to_install))[:8]))
     # Flatpaks
     if desired_fp and ("flatpak" in scope):
-        print(f"  • Flatpak: kurulacak {len(fp_install)}, (isteğe bağlı) kaldırılabilir {len(fp_remove)}")
+        print(
+            f"  • Flatpak: kurulacak {len(fp_install)}, (isteğe bağlı) kaldırılabilir {len(fp_remove)}"
+        )
         if fp_install:
             print("    Örnek (install):", ", ".join(sorted(list(fp_install))[:8]))
     # Extra-config
     if xc_root.exists() and ("extra_config" in scope):
-        print(f"  • extra-config: yeni {len(xc_new)}, üzerine yazılacak {len(xc_change)} (silme yapılmaz)")
+        print(
+            f"  • extra-config: yeni {len(xc_new)}, üzerine yazılacak {len(xc_change)} (silme yapılmaz)"
+        )
         for s in _sample(xc_new):
             print(f"    + {s}")
         for s in _sample(xc_change):
             print(f"    ~ {s}")
     # Extra-data
     if xd_root.exists() and ("extra_data" in scope):
-        print(f"  • extra-data: yeni {len(xd_new)}, üzerine yazılacak {len(xd_change)} (silme yapılmaz)")
+        print(
+            f"  • extra-data: yeni {len(xd_new)}, üzerine yazılacak {len(xd_change)} (silme yapılmaz)"
+        )
         for s in _sample(xd_new):
             print(f"    + {s}")
         for s in _sample(xd_change):
             print(f"    ~ {s}")
-    print("\nNot: Restore, extra-* için dosya KOPYALAR; mevcut fazladan dosyaları silmez.")
+    print(
+        "\nNot: Restore, extra-* için dosya KOPYALAR; mevcut fazladan dosyaları silmez."
+    )
 
 
 def _human_size(n: int) -> str:
@@ -901,7 +1052,9 @@ def _human_size(n: int) -> str:
     return f"{s:.1f} PB"
 
 
-def _estimate_pkg_sizes(pm: str, packages: list[str], sample: int = 12) -> tuple[int, int]:
+def _estimate_pkg_sizes(
+    pm: str, packages: list[str], sample: int = 12
+) -> tuple[int, int]:
     """Best-effort rough size estimate (bytes) using package manager info for a small sample.
     Returns (sample_total, estimated_total) where estimated extrapolates to full set.
     If not available, returns (0, 0)."""
@@ -909,9 +1062,14 @@ def _estimate_pkg_sizes(pm: str, packages: list[str], sample: int = 12) -> tuple
     if not pkgs:
         return 0, 0
     total = 0
+
     def parse_size(out: str) -> int:
         # Try to find numeric bytes in output lines like "Size : 12 M" or "Installed-Size: 3456 kB"
-        m = re.search(r"(Installed-Size|Size)\s*[:=]?\s*([0-9]+)\s*(kB|KB|MB|GB)?", out, re.IGNORECASE)
+        m = re.search(
+            r"(Installed-Size|Size)\s*[:=]?\s*([0-9]+)\s*(kB|KB|MB|GB)?",
+            out,
+            re.IGNORECASE,
+        )
         if not m:
             return 0
         val = int(m.group(2))
@@ -926,19 +1084,40 @@ def _estimate_pkg_sizes(pm: str, packages: list[str], sample: int = 12) -> tuple
         if unit == "KB":
             return val * 1024
         return val
+
     try:
         for p in pkgs:
             if pm in {"dnf", "rpm"}:
-                r = run(["bash", "-lc", f"dnf info {shlex.quote(p)} 2>/dev/null || rpm -qi {shlex.quote(p)} 2>/dev/null"], check=False)
+                r = run(
+                    [
+                        "bash",
+                        "-lc",
+                        f"dnf info {shlex.quote(p)} 2>/dev/null || rpm -qi {shlex.quote(p)} 2>/dev/null",
+                    ],
+                    check=False,
+                )
                 total += parse_size(r.stdout)
             elif pm == "apt":
-                r = run(["bash", "-lc", f"apt show {shlex.quote(p)} 2>/dev/null || apt-cache show {shlex.quote(p)} 2>/dev/null"], check=False)
+                r = run(
+                    [
+                        "bash",
+                        "-lc",
+                        f"apt show {shlex.quote(p)} 2>/dev/null || apt-cache show {shlex.quote(p)} 2>/dev/null",
+                    ],
+                    check=False,
+                )
                 total += parse_size(r.stdout)
             elif pm == "pacman":
-                r = run(["bash", "-lc", f"pacman -Si {shlex.quote(p)} 2>/dev/null"], check=False)
+                r = run(
+                    ["bash", "-lc", f"pacman -Si {shlex.quote(p)} 2>/dev/null"],
+                    check=False,
+                )
                 total += parse_size(r.stdout)
             elif pm == "zypper":
-                r = run(["bash", "-lc", f"zypper info {shlex.quote(p)} 2>/dev/null"], check=False)
+                r = run(
+                    ["bash", "-lc", f"zypper info {shlex.quote(p)} 2>/dev/null"],
+                    check=False,
+                )
                 total += parse_size(r.stdout)
     except (subprocess.CalledProcessError, OSError, ValueError):
         return 0, 0
@@ -946,7 +1125,11 @@ def _estimate_pkg_sizes(pm: str, packages: list[str], sample: int = 12) -> tuple
     return total, est
 
 
-def do_restore_dry_run(target: str | None = None, scope_override: set[str] | None = None, tag: str | None = None):
+def do_restore_dry_run(
+    target: str | None = None,
+    scope_override: set[str] | None = None,
+    tag: str | None = None,
+):
     """Simulate restore actions with rsync-like output and rough size estimates."""
     # Reuse preview to compute diffs
     # Resolve backup dir
@@ -960,7 +1143,13 @@ def do_restore_dry_run(target: str | None = None, scope_override: set[str] | Non
             if tag:
                 backup_dir = find_backup_by_tag(tag)
             elif target:
-                cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(target)])
+                cands = sorted(
+                    [
+                        p
+                        for p in BACKUP_ROOT.iterdir()
+                        if p.is_dir() and p.name.startswith(target)
+                    ]
+                )
                 backup_dir = cands[-1] if cands else None
     if not backup_dir or not backup_dir.exists():
         print("[!] Dry-run için yedek bulunamadı.")
@@ -974,7 +1163,9 @@ def do_restore_dry_run(target: str | None = None, scope_override: set[str] | Non
     knsv = _find_knsv(backup_dir)
     if "konsave" in scope:
         if knsv:
-            print(f"[DRY] konsave -i {knsv.name} && konsave -a {meta.get('profile') or DEFAULT_PROFILE}")
+            print(
+                f"[DRY] konsave -i {knsv.name} && konsave -a {meta.get('profile') or DEFAULT_PROFILE}"
+            )
         else:
             print("[DRY] .knsv yok -> konsave adımı atlanır")
 
@@ -989,13 +1180,29 @@ def do_restore_dry_run(target: str | None = None, scope_override: set[str] | Non
             note = f" (tahmini boyut ~{_human_size(est)})" if est else ""
             print(f"[DRY] Paket kurulumu: {len(to_install)} paket{note}")
             if pm in {"dnf", "rpm"}:
-                print("      sudo dnf install -y ", " ".join(shlex.quote(x) for x in to_install[:15]), (" ..." if len(to_install) > 15 else ""))
+                print(
+                    "      sudo dnf install -y ",
+                    " ".join(shlex.quote(x) for x in to_install[:15]),
+                    (" ..." if len(to_install) > 15 else ""),
+                )
             elif pm == "apt":
-                print("      sudo apt install -y ", " ".join(shlex.quote(x) for x in to_install[:15]), (" ..." if len(to_install) > 15 else ""))
+                print(
+                    "      sudo apt install -y ",
+                    " ".join(shlex.quote(x) for x in to_install[:15]),
+                    (" ..." if len(to_install) > 15 else ""),
+                )
             elif pm == "pacman":
-                print("      sudo pacman -S --needed ", " ".join(shlex.quote(x) for x in to_install[:15]), (" ..." if len(to_install) > 15 else ""))
+                print(
+                    "      sudo pacman -S --needed ",
+                    " ".join(shlex.quote(x) for x in to_install[:15]),
+                    (" ..." if len(to_install) > 15 else ""),
+                )
             elif pm == "zypper":
-                print("      sudo zypper install -y ", " ".join(shlex.quote(x) for x in to_install[:15]), (" ..." if len(to_install) > 15 else ""))
+                print(
+                    "      sudo zypper install -y ",
+                    " ".join(shlex.quote(x) for x in to_install[:15]),
+                    (" ..." if len(to_install) > 15 else ""),
+                )
 
     # Flatpaks
     if "flatpak" in scope:
@@ -1003,12 +1210,21 @@ def do_restore_dry_run(target: str | None = None, scope_override: set[str] | Non
         current_fp = set(list_flatpaks()) if desired_fp else set()
         to_install_fp = sorted(desired_fp - current_fp)
         if to_install_fp:
-            print(f"[DRY] Flatpak kurulumu: {len(to_install_fp)} uygulama (boyut değişken, flathub'a bağlı)")
-            print("      flatpak install -y --noninteractive ", " ".join(shlex.quote(x) for x in to_install_fp[:15]), (" ..." if len(to_install_fp) > 15 else ""))
+            print(
+                f"[DRY] Flatpak kurulumu: {len(to_install_fp)} uygulama (boyut değişken, flathub'a bağlı)"
+            )
+            print(
+                "      flatpak install -y --noninteractive ",
+                " ".join(shlex.quote(x) for x in to_install_fp[:15]),
+                (" ..." if len(to_install_fp) > 15 else ""),
+            )
 
     # Extra-* rsync-like
     home = Path.home()
-    for label, sub, enabled in (("extra-config", "extra-config", "extra_config" in scope), ("extra-data", "extra-data", "extra_data" in scope)):
+    for label, sub, enabled in (
+        ("extra-config", "extra-config", "extra_config" in scope),
+        ("extra-data", "extra-data", "extra_data" in scope),
+    ):
         root = backup_dir / sub
         if root.exists() and enabled:
             print(f"[DRY] rsync --dry-run {sub}/ -> ~/")
@@ -1016,7 +1232,11 @@ def do_restore_dry_run(target: str | None = None, scope_override: set[str] | Non
                 if f.is_file():
                     rel = f.relative_to(root)
                     dest = home / rel
-                    sign = "+" if not dest.exists() else ("~" if not filecmp.cmp(f, dest, shallow=False) else "=")
+                    sign = (
+                        "+"
+                        if not dest.exists()
+                        else ("~" if not filecmp.cmp(f, dest, shallow=False) else "=")
+                    )
                     if sign != "=":
                         try:
                             sz = f.stat().st_size
@@ -1048,6 +1268,7 @@ def pick_backup_dir() -> Path | None:
     print("[!] Geçersiz seçim.")
     return None
 
+
 def verify_backup(target: str | None = None, tag: str | None = None):
     """Inspect .knsv contents and report presence of core KDE items."""
     # Resolve backup dir
@@ -1061,7 +1282,13 @@ def verify_backup(target: str | None = None, tag: str | None = None):
             if tag:
                 backup_dir = find_backup_by_tag(tag)
             elif target:
-                cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(target)])
+                cands = sorted(
+                    [
+                        p
+                        for p in BACKUP_ROOT.iterdir()
+                        if p.is_dir() and p.name.startswith(target)
+                    ]
+                )
                 backup_dir = cands[-1] if cands else None
     if not backup_dir or not backup_dir.exists():
         print("[!] Verify için yedek bulunamadı.")
@@ -1130,17 +1357,33 @@ def verify_backup(target: str | None = None, tag: str | None = None):
         return
 
     print("\n[Verify]")
+
     def ok(b: bool) -> str:
         return "✓" if b else "✗"
-    print(f"  {ok(found_files[wanted_files_suffix[0]])} Panel yerleşimi: ~/.config/plasma-org.kde.plasma.desktop-appletsrc")
-    print(f"  {ok(found_files[wanted_files_suffix[1]])} Genel KDE: ~/.config/kdeglobals")
+
+    print(
+        f"  {ok(found_files[wanted_files_suffix[0]])} Panel yerleşimi: ~/.config/plasma-org.kde.plasma.desktop-appletsrc"
+    )
+    print(
+        f"  {ok(found_files[wanted_files_suffix[1]])} Genel KDE: ~/.config/kdeglobals"
+    )
     print(f"  {ok(found_files[wanted_files_suffix[2]])} KWin: ~/.config/kwinrc")
-    print(f"  {ok(found_dirs[wanted_dirs_prefix[0]])} Plasmoid dizinleri: ~/.local/share/plasma/plasmoids/")
-    print(f"  {ok(found_dirs[wanted_dirs_prefix[1]])} Look-and-feel: ~/.local/share/plasma/look-and-feel/")
-    print(f"  {ok(found_dirs[wanted_dirs_prefix[2]])} Icon themes: ~/.local/share/icons/")
-    print(f"  {ok(found_dirs[wanted_dirs_prefix[3]])} Color schemes: ~/.local/share/color-schemes/")
+    print(
+        f"  {ok(found_dirs[wanted_dirs_prefix[0]])} Plasmoid dizinleri: ~/.local/share/plasma/plasmoids/"
+    )
+    print(
+        f"  {ok(found_dirs[wanted_dirs_prefix[1]])} Look-and-feel: ~/.local/share/plasma/look-and-feel/"
+    )
+    print(
+        f"  {ok(found_dirs[wanted_dirs_prefix[2]])} Icon themes: ~/.local/share/icons/"
+    )
+    print(
+        f"  {ok(found_dirs[wanted_dirs_prefix[3]])} Color schemes: ~/.local/share/color-schemes/"
+    )
     print(f"  {ok(found_dirs[wanted_dirs_prefix[4]])} Aurorae: ~/.local/share/aurorae/")
-    print(f"  {ok(found_dirs[wanted_dirs_prefix[5]])} Konsole profilleri: ~/.local/share/konsole/")
+    print(
+        f"  {ok(found_dirs[wanted_dirs_prefix[5]])} Konsole profilleri: ~/.local/share/konsole/"
+    )
     print(f"  {ok(found_colorizer)} Panel Colorizer ile ilişkili girdiler")
 
 
@@ -1153,7 +1396,9 @@ def _resolve_backup_selector(sel: str | None, tag: str | None) -> Path | None:
     if tag:
         b = find_backup_by_tag(tag)
     elif sel:
-        cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(sel)])
+        cands = sorted(
+            [p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(sel)]
+        )
         b = cands[-1] if cands else None
     return b
 
@@ -1161,12 +1406,15 @@ def _resolve_backup_selector(sel: str | None, tag: str | None) -> Path | None:
 def compare_backups(a: str, b: str):
     """Compare two backups by timestamp prefix or tag.
     Accepts values like 'latest', timestamp prefix, or 'tag:<name>'."""
+
     def resolve(x: str) -> Path | None:
         if x == "latest":
             return BACKUP_ROOT / "latest"
         if x.startswith("tag:"):
             return find_backup_by_tag(x.split(":", 1)[1])
-        cands = sorted([p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(x)])
+        cands = sorted(
+            [p for p in BACKUP_ROOT.iterdir() if p.is_dir() and p.name.startswith(x)]
+        )
         return cands[-1] if cands else None
 
     a_dir = resolve(a)
@@ -1187,6 +1435,7 @@ def compare_backups(a: str, b: str):
     add_fp = sorted(b_fp - a_fp)
     rm_fp = sorted(a_fp - b_fp)
     # Konsave archive contents (names only)
+
     def list_archive_names(p: Path) -> set[str]:
         k = _find_knsv(p)
         names: set[str] = set()
@@ -1202,11 +1451,13 @@ def compare_backups(a: str, b: str):
         except Exception:
             pass
         return names
+
     a_kn = list_archive_names(a_dir)
     b_kn = list_archive_names(b_dir)
     add_kn = sorted(b_kn - a_kn)[:20]
     rm_kn = sorted(a_kn - b_kn)[:20]
     # Extra dirs
+
     def scan_files(root: Path) -> set[str]:
         out: set[str] = set()
         if root.exists():
@@ -1214,6 +1465,7 @@ def compare_backups(a: str, b: str):
                 if f.is_file():
                     out.add(str(f.relative_to(root)))
         return out
+
     a_xc = scan_files(a_dir / "extra-config")
     b_xc = scan_files(b_dir / "extra-config")
     add_xc = sorted(b_xc - a_xc)[:20]
@@ -1226,7 +1478,9 @@ def compare_backups(a: str, b: str):
     print("\n[Compare]")
     print(f"  • Packages: +{len(add_pkgs)}, -{len(rm_pkgs)}")
     if add_pkgs:
-        print("    + ", ", ".join(add_pkgs[:15]), (" ..." if len(add_pkgs) > 15 else ""))
+        print(
+            "    + ", ", ".join(add_pkgs[:15]), (" ..." if len(add_pkgs) > 15 else "")
+        )
     if rm_pkgs:
         print("    - ", ", ".join(rm_pkgs[:15]), (" ..." if len(rm_pkgs) > 15 else ""))
     print(f"  • Flatpaks: +{len(add_fp)}, -{len(rm_fp)}")
@@ -1251,8 +1505,12 @@ def compare_backups(a: str, b: str):
         print("    - ", ", ".join(rm_xd))
 
 
-def restore_import_bundle(bundle_path: Path, scope_override: set[str] | None = None,
-                          yes_extra_config: bool | None = None, yes_extra_data: bool | None = None):
+def restore_import_bundle(
+    bundle_path: Path,
+    scope_override: set[str] | None = None,
+    yes_extra_config: bool | None = None,
+    yes_extra_data: bool | None = None,
+):
     """Apply a shared bundle directory that contains .knsv + meta.json (+ optional extra-*)"""
     if not bundle_path.exists() or not bundle_path.is_dir():
         print("[!] Geçersiz bundle yolu.")
@@ -1300,7 +1558,9 @@ def restore_import_bundle(bundle_path: Path, scope_override: set[str] | None = N
                     except OSError:
                         pass
 
+
 # --------------------- UI ---------------------
+
 
 def main():
     print("\nKDE Backup/Restore (konsave + package/flatpak)")
@@ -1341,7 +1601,10 @@ def main():
             verify_backup()
         elif choice == "5":
             # Preview
-            sel = input("Hedef (boş=son, latest=<son>, ya da timestamp öneki): ").strip() or "latest"
+            sel = (
+                input("Hedef (boş=son, latest=<son>, ya da timestamp öneki): ").strip()
+                or "latest"
+            )
             tag = None
             if sel.startswith("tag:"):
                 tag = sel.split(":", 1)[1]
@@ -1349,15 +1612,24 @@ def main():
             do_preview(target=sel, tag=tag)
         elif choice == "6":
             # Dry-run
-            sel = input("Hedef (boş=son, latest=<son>, ya da timestamp öneki): ").strip() or "latest"
+            sel = (
+                input("Hedef (boş=son, latest=<son>, ya da timestamp öneki): ").strip()
+                or "latest"
+            )
             tag = None
             if sel.startswith("tag:"):
                 tag = sel.split(":", 1)[1]
                 sel = None
             do_restore_dry_run(target=sel, tag=tag)
         elif choice == "7":
-            a = input("İlk yedek (latest | timestamp | tag:<isim>): ").strip() or "latest"
-            b = input("İkinci yedek (latest | timestamp | tag:<isim>): ").strip() or "latest"
+            a = (
+                input("İlk yedek (latest | timestamp | tag:<isim>): ").strip()
+                or "latest"
+            )
+            b = (
+                input("İkinci yedek (latest | timestamp | tag:<isim>): ").strip()
+                or "latest"
+            )
             compare_backups(a, b)
         elif choice == "8":
             p = input("Bundle klasörü yolu: ").strip()
@@ -1380,7 +1652,7 @@ if __name__ == "__main__":
                 if i + 1 < len(args):
                     KONSAVE_EXTRA_ARGS = shlex.split(args[i + 1])
                 # remove parsed pieces
-                del args[i:i+2]
+                del args[i : i + 2]
             cmd = args[0].lower()
             # common optional flags
             scope_set = None
@@ -1388,12 +1660,13 @@ if __name__ == "__main__":
             tag_filter = None
             ts_hint = None
             # parse simple flags
+
             def _pop_opt(opt: str) -> str | None:
                 if opt in args:
                     j = args.index(opt)
                     if j + 1 < len(args):
                         val = args[j + 1]
-                        del args[j:j+2]
+                        del args[j : j + 2]
                         return val
                 return None
 
@@ -1441,14 +1714,21 @@ if __name__ == "__main__":
                 verify_backup(target=ts_hint, tag=tag_filter)
                 sys.exit(0)
             elif cmd in {"--restore", "restore"}:
-                do_restore(scope_override=scope_set, tag=tag_filter, timestamp_hint=ts_hint,
-                           yes_extra_config=yes_extra_config, yes_extra_data=yes_extra_data)
+                do_restore(
+                    scope_override=scope_set,
+                    tag=tag_filter,
+                    timestamp_hint=ts_hint,
+                    yes_extra_config=yes_extra_config,
+                    yes_extra_data=yes_extra_data,
+                )
                 sys.exit(0)
             elif cmd in {"--preview", "preview"}:
                 do_preview(target=ts_hint, scope_override=scope_set, tag=tag_filter)
                 sys.exit(0)
             elif cmd in {"--dry-run", "dry-run", "--restore-dry-run"}:
-                do_restore_dry_run(target=ts_hint, scope_override=scope_set, tag=tag_filter)
+                do_restore_dry_run(
+                    target=ts_hint, scope_override=scope_set, tag=tag_filter
+                )
                 sys.exit(0)
             elif cmd in {"--compare", "compare"}:
                 # Expect two selectors after command, support tag:<name>
@@ -1457,7 +1737,9 @@ if __name__ == "__main__":
                     b_sel = args[2]
                     compare_backups(a_sel, b_sel)
                 else:
-                    print("Kullanım: --compare <A> <B>  (ör: latest 20250822-093012 veya tag:gaming tag:workstation)")
+                    print(
+                        "Kullanım: --compare <A> <B>  (ör: latest 20250822-093012 veya tag:gaming tag:workstation)"
+                    )
                 sys.exit(0)
             elif cmd in {"--import-bundle", "import-bundle"}:
                 # Next arg must be a path
@@ -1467,8 +1749,12 @@ if __name__ == "__main__":
                 if bundle is None:
                     print("Kullanım: --import-bundle <klasör>")
                 else:
-                    restore_import_bundle(bundle, scope_override=scope_set,
-                                          yes_extra_config=yes_extra_config, yes_extra_data=yes_extra_data)
+                    restore_import_bundle(
+                        bundle,
+                        scope_override=scope_set,
+                        yes_extra_config=yes_extra_config,
+                        yes_extra_data=yes_extra_data,
+                    )
                 sys.exit(0)
         # interactive menu fallback
         main()

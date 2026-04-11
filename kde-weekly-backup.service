@@ -4,13 +4,16 @@ After=graphical-session.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/env bash -lc 'export PATH="$HOME/.local/bin:$HOME/.local/share/pipx/venvs/konsave/bin:/usr/local/bin:/usr/bin:/bin" && printf "\n" | /usr/bin/python3 %h/projects/kde-profile-backup/scripts/kde_backup_restore.py --full'
+ExecStart=/usr/bin/python3 %h/Belgeler/projects/kde-profile-backup/scripts/kde_backup_restore.py --full
 Environment=DISPLAY=:0
-Environment=HOME=%h
-Environment=PATH=/usr/local/bin:/usr/bin:/bin:%h/.local/bin
-WorkingDirectory=%h/projects/kde-profile-backup
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=%h/Belgeler/projects/kde-profile-backup
+# Note: Replace 'Belgeler/projects' with your actual path to this repo
 StandardOutput=journal
 StandardError=journal
 
 # Add a small delay to ensure desktop is fully loaded
 ExecStartPre=/bin/sleep 30
+
+[Install]
+WantedBy=default.target

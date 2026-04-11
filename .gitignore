@@ -1,9 +1,36 @@
+# Backup data (NEVER commit)
+kde-backups/
+scripts/kde-backups/
 archive/
+
+# IDE and editor settings (may contain personal paths)
+.vscode/
+.idea/
+*.sublime-*
+
+# Personal data folders (common apps)
+.thunderbird/
+.mozilla/
+.gnome/
+.kde/
+.local/
+
+# Logs and temp files
 *.log
 *.tmp
+*.bak
+*~
+
+# Test/draft files
 test_*
 draft_*
-kde-backups/
+*_input.txt
+
+# Python
 __pycache__/
 *.pyc
-*_input.txt
+.pytest_cache/
+.ruff_cache/
+
+# Local history (NEVER commit)
+HISTORY.local.md
