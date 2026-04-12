@@ -33,4 +33,3 @@ jobs:
       - name: Check shell script syntax
         run: |
           bash -n scripts/kde_backup_wrapper.sh
-          bash -n scripts/tests_smoke.py
