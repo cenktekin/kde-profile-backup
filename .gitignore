@@ -34,3 +34,8 @@ __pycache__/
 
 # Local history (NEVER commit)
 HISTORY.local.md
+
+# Environment variables
+.env
+.env.local
+.env.*.local
